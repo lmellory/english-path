@@ -1,0 +1,351 @@
+// Prisma schema — English Path
+// Полная схема БД: пользователи, контент курса, прогресс, SRS.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================ ENUMS ============================
+
+enum LevelCode {
+  A1
+  A2
+  B1
+  B2
+  C1
+}
+
+enum ModuleType {
+  VOCAB
+  GRAMMAR
+  SPEAKING
+  LISTENING
+  WRITING
+  READING
+  SLANG_IDIOMS
+}
+
+enum Register {
+  FORMAL
+  NEUTRAL
+  INFORMAL
+  SLANG
+}
+
+enum VocabKind {
+  WORD
+  IDIOM
+  PHRASAL_VERB
+  ABBREVIATION
+}
+
+enum ExerciseType {
+  MCQ
+  FILL_BLANK
+  MATCHING
+  WORD_ORDER
+  SPEAKING
+  LISTENING
+  WRITING
+  READING_Q
+}
+
+enum ProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum Accent {
+  UK
+  US
+}
+
+enum ThemePref {
+  LIGHT
+  DARK
+  SYSTEM
+}
+
+// ============================ USERS ============================
+
+model User {
+  id            String    @id @default(cuid())
+  username      String    @unique
+  passwordHash  String
+  displayName   String
+  currentLevel  LevelCode @default(A1)
+  placementDone Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  settings         UserSettings?
+  lessonProgress   LessonProgress[]
+  exerciseAttempts ExerciseAttempt[]
+  srsCards         SrsCard[]
+  placementResults PlacementResult[]
+  examResults      ExamResult[]
+  dailyActivity    DailyActivity[]
+  streak           Streak?
+  achievements     UserAchievement[]
+}
+
+model UserSettings {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  theme            ThemePref @default(SYSTEM)
+  accent           Accent    @default(UK)
+  dailyGoalMinutes Int       @default(20)
+}
+
+// ============================ CONTENT ============================
+
+model Level {
+  code      String @id // "A1".."C1"
+  title     String
+  order     Int    @unique
+  cefrCanDo String
+
+  modules      Module[]
+  vocabItems   VocabItem[]
+  readingTexts ReadingText[]
+}
+
+model Module {
+  id        String     @id @default(cuid())
+  levelCode String
+  level     Level      @relation(fields: [levelCode], references: [code], onDelete: Cascade)
+  type      ModuleType
+  title     String
+  order     Int
+
+  lessons Lesson[]
+
+  @@unique([levelCode, type])
+  @@index([levelCode])
+}
+
+model Lesson {
+  id         String  @id @default(cuid())
+  moduleId   String
+  module     Module  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title      String
+  order      Int
+  estMinutes Int     @default(15)
+  intro      String?
+
+  grammarPoints  GrammarPoint[]
+  exercises      Exercise[]
+  dialogues      Dialogue[]
+  readingTexts   ReadingText[]
+  listeningTasks ListeningTask[]
+  vocabItems     VocabItem[]
+  lessonProgress LessonProgress[]
+
+  @@index([moduleId])
+}
+
+model VocabItem {
+  id            String    @id @default(cuid())
+  levelCode     String
+  level         Level     @relation(fields: [levelCode], references: [code], onDelete: Cascade)
+  lessonId      String?
+  lesson        Lesson?   @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  headword      String
+  ipaUk         String?
+  ipaUs         String?
+  pos           String? // часть речи
+  translationRu String
+  exampleEn     String?
+  exampleRu     String?
+  topic         String?
+  frequencyRank Int?
+  register      Register  @default(NEUTRAL)
+  kind          VocabKind @default(WORD)
+
+  srsCards SrsCard[]
+
+  @@index([levelCode])
+  @@index([lessonId])
+}
+
+model GrammarPoint {
+  id       String @id @default(cuid())
+  lessonId String
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  title    String
+  theoryMd String
+  examples Json?
+
+  @@index([lessonId])
+}
+
+model Exercise {
+  id          String       @id @default(cuid())
+  lessonId    String
+  lesson      Lesson       @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  order       Int
+  type        ExerciseType
+  prompt      Json
+  answer      Json
+  explanation String?
+
+  attempts ExerciseAttempt[]
+
+  @@index([lessonId])
+}
+
+model Dialogue {
+  id       String  @id @default(cuid())
+  lessonId String
+  lesson   Lesson  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  title    String?
+  lines    Json // [{ speaker, en, ru, ipa }]
+
+  @@index([lessonId])
+}
+
+model ReadingText {
+  id        String  @id @default(cuid())
+  lessonId  String?
+  lesson    Lesson? @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  levelCode String
+  level     Level   @relation(fields: [levelCode], references: [code], onDelete: Cascade)
+  title     String
+  bodyEn    String
+  questions Json // [{ q, options, answer }]
+
+  @@index([lessonId])
+  @@index([levelCode])
+}
+
+model ListeningTask {
+  id        String @id @default(cuid())
+  lessonId  String
+  lesson    Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  scriptEn  String
+  questions Json
+
+  @@index([lessonId])
+}
+
+model Achievement {
+  code        String  @id
+  title       String
+  description String
+  icon        String?
+  condition   Json?
+
+  users UserAchievement[]
+}
+
+// ============================ PROGRESS ============================
+
+model LessonProgress {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonId    String
+  lesson      Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  status      ProgressStatus @default(NOT_STARTED)
+  score       Int?
+  completedAt DateTime?
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([userId, lessonId])
+  @@index([userId])
+}
+
+model ExerciseAttempt {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exerciseId  String
+  exercise    Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  isCorrect   Boolean
+  userAnswer  Json?
+  attemptedAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([exerciseId])
+}
+
+model SrsCard {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vocabItemId    String
+  vocabItem      VocabItem @relation(fields: [vocabItemId], references: [id], onDelete: Cascade)
+  easeFactor     Float     @default(2.5)
+  interval       Int       @default(0) // дней
+  repetitions    Int       @default(0)
+  dueDate        DateTime  @default(now())
+  lastReviewedAt DateTime?
+
+  @@unique([userId, vocabItemId])
+  @@index([userId, dueDate])
+}
+
+model PlacementResult {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  determinedLevel LevelCode
+  score           Int
+  takenAt         DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model ExamResult {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  levelCode LevelCode
+  score     Int
+  passed    Boolean
+  takenAt   DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model DailyActivity {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date             DateTime @db.Date
+  minutesStudied   Int      @default(0)
+  lessonsCompleted Int      @default(0)
+  wordsLearned     Int      @default(0)
+  reviewsDone      Int      @default(0)
+
+  @@unique([userId, date])
+  @@index([userId])
+}
+
+model Streak {
+  userId         String    @id
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentStreak  Int       @default(0)
+  longestStreak  Int       @default(0)
+  lastActiveDate DateTime?
+}
+
+model UserAchievement {
+  id              String      @id @default(cuid())
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievementCode String
+  achievement     Achievement @relation(fields: [achievementCode], references: [code], onDelete: Cascade)
+  unlockedAt      DateTime    @default(now())
+
+  @@unique([userId, achievementCode])
+  @@index([userId])
+}
